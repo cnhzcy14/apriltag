@@ -30,7 +30,8 @@ either expressed or implied, of the Regents of The University of Michigan.
 
 #include "opencv2/opencv.hpp"
 
-extern "C" {
+extern "C"
+{
 #include "apriltag.h"
 #include "tag36h11.h"
 #include "tag25h9.h"
@@ -43,9 +44,10 @@ extern "C" {
 #include "common/getopt.h"
 }
 
+#define HAMM_HIST_MAX 10
+
 using namespace std;
 using namespace cv;
-
 
 int main(int argc, char *argv[])
 {
@@ -57,12 +59,14 @@ int main(int argc, char *argv[])
     getopt_add_bool(getopt, 'q', "quiet", 0, "Reduce output");
     getopt_add_string(getopt, 'f', "family", "tag36h11", "Tag family to use");
     getopt_add_int(getopt, 't', "threads", "1", "Use this many CPU threads");
+    getopt_add_int(getopt, 'a', "hamming", "2", "Detect tags with up to this many bit errors.");
     getopt_add_double(getopt, 'x', "decimate", "2.0", "Decimate input image by this factor");
     getopt_add_double(getopt, 'b', "blur", "0.0", "Apply low-pass blur to input");
     getopt_add_bool(getopt, '0', "refine-edges", 1, "Spend more time trying to align edges of tags");
 
     if (!getopt_parse(getopt, argc, argv, 1) ||
-            getopt_get_bool(getopt, "help")) {
+        getopt_get_bool(getopt, "help"))
+    {
         printf("Usage: %s [options]\n", argv[0]);
         getopt_do_usage(getopt);
         exit(0);
@@ -75,7 +79,8 @@ int main(int argc, char *argv[])
 
     // Initialize camera
     VideoCapture cap(getopt_get_int(getopt, "camera"));
-    if (!cap.isOpened()) {
+    if (!cap.isOpened())
+    {
         cerr << "Couldn't open video capture device" << endl;
         return -1;
     }
@@ -83,32 +88,49 @@ int main(int argc, char *argv[])
     // Initialize tag detector with options
     apriltag_family_t *tf = NULL;
     const char *famname = getopt_get_string(getopt, "family");
-    if (!strcmp(famname, "tag36h11")) {
+    if (!strcmp(famname, "tag36h11"))
+    {
         tf = tag36h11_create();
-    } else if (!strcmp(famname, "tag25h9")) {
+    }
+    else if (!strcmp(famname, "tag25h9"))
+    {
         tf = tag25h9_create();
-    } else if (!strcmp(famname, "tag16h5")) {
+    }
+    else if (!strcmp(famname, "tag16h5"))
+    {
         tf = tag16h5_create();
-    } else if (!strcmp(famname, "tagCircle21h7")) {
+    }
+    else if (!strcmp(famname, "tagCircle21h7"))
+    {
         tf = tagCircle21h7_create();
-    } else if (!strcmp(famname, "tagCircle49h12")) {
+    }
+    else if (!strcmp(famname, "tagCircle49h12"))
+    {
         tf = tagCircle49h12_create();
-    } else if (!strcmp(famname, "tagStandard41h12")) {
+    }
+    else if (!strcmp(famname, "tagStandard41h12"))
+    {
         tf = tagStandard41h12_create();
-    } else if (!strcmp(famname, "tagStandard52h13")) {
+    }
+    else if (!strcmp(famname, "tagStandard52h13"))
+    {
         tf = tagStandard52h13_create();
-    } else if (!strcmp(famname, "tagCustom48h12")) {
+    }
+    else if (!strcmp(famname, "tagCustom48h12"))
+    {
         tf = tagCustom48h12_create();
-    } else {
+    }
+    else
+    {
         printf("Unrecognized tag family name. Use e.g. \"tag36h11\".\n");
         exit(-1);
     }
 
-
     apriltag_detector_t *td = apriltag_detector_create();
-    apriltag_detector_add_family(td, tf);
+    apriltag_detector_add_family_bits(td, tf, getopt_get_int(getopt, "hamming"));
 
-    if (errno == ENOMEM) {
+    if (errno == ENOMEM)
+    {
         printf("Unable to add family to detector due to insufficient memory to allocate the tag-family decoder with the default maximum hamming value of 2. Try choosing an alternative tag family.\n");
         exit(-1);
     }
@@ -119,57 +141,64 @@ int main(int argc, char *argv[])
     td->debug = getopt_get_bool(getopt, "debug");
     td->refine_edges = getopt_get_bool(getopt, "refine-edges");
 
+    int quiet = getopt_get_bool(getopt, "quiet");
+    printf("========== %lf\n", td->quad_sigma);
+
+
     float frame_counter = 0.0f;
     meter.stop();
     cout << "Detector " << famname << " initialized in "
-        << std::fixed << std::setprecision(3) << meter.getTimeSec() << " seconds" << endl;
+         << std::fixed << std::setprecision(3) << meter.getTimeSec() << " seconds" << endl;
 #if CV_MAJOR_VERSION > 3
-    cout << "  " << cap.get(CAP_PROP_FRAME_WIDTH ) << "x" <<
-                    cap.get(CAP_PROP_FRAME_HEIGHT ) << " @" <<
-                    cap.get(CAP_PROP_FPS) << "FPS" << endl;
+    cout << "  " << cap.get(CAP_PROP_FRAME_WIDTH) << "x" << cap.get(CAP_PROP_FRAME_HEIGHT) << " @" << cap.get(CAP_PROP_FPS) << "FPS" << endl;
 #else
-    cout << "  " << cap.get(CV_CAP_PROP_FRAME_WIDTH ) << "x" <<
-                    cap.get(CV_CAP_PROP_FRAME_HEIGHT ) << " @" <<
-                    cap.get(CV_CAP_PROP_FPS) << "FPS" << endl;
+    cout << "  " << cap.get(CV_CAP_PROP_FRAME_WIDTH) << "x" << cap.get(CV_CAP_PROP_FRAME_HEIGHT) << " @" << cap.get(CV_CAP_PROP_FPS) << "FPS" << endl;
 #endif
     meter.reset();
 
     Mat frame, gray;
-    while (true) {
+    while (true)
+    {
+
+        int hamm_hist[HAMM_HIST_MAX];
+        memset(hamm_hist, 0, sizeof(hamm_hist));
+
         errno = 0;
         cap >> frame;
-        cvtColor(frame, gray, COLOR_BGR2GRAY);
+        // cvtColor(frame, gray, COLOR_BGR2GRAY);
+        gray = frame;
 
         // Make an image_u8_t header for the Mat data
-        image_u8_t im = { .width = gray.cols,
-            .height = gray.rows,
-            .stride = gray.cols,
-            .buf = gray.data
-        };
+        image_u8_t im = {.width = gray.cols,
+                         .height = gray.rows,
+                         .stride = gray.cols,
+                         .buf = gray.data};
 
         zarray_t *detections = apriltag_detector_detect(td, &im);
 
-        if (errno == EAGAIN) {
-            printf("Unable to create the %d threads requested.\n",td->nthreads);
+        if (errno == EAGAIN)
+        {
+            printf("Unable to create the %d threads requested.\n", td->nthreads);
             exit(-1);
         }
 
         // Draw detection outlines
-        for (int i = 0; i < zarray_size(detections); i++) {
+        for (int i = 0; i < zarray_size(detections); i++)
+        {
             apriltag_detection_t *det;
             zarray_get(detections, i, &det);
             line(frame, Point(det->p[0][0], det->p[0][1]),
-                     Point(det->p[1][0], det->p[1][1]),
-                     Scalar(0, 0xff, 0), 2);
+                 Point(det->p[1][0], det->p[1][1]),
+                 Scalar(0, 0xff, 0), 2);
             line(frame, Point(det->p[0][0], det->p[0][1]),
-                     Point(det->p[3][0], det->p[3][1]),
-                     Scalar(0, 0, 0xff), 2);
+                 Point(det->p[3][0], det->p[3][1]),
+                 Scalar(0, 0, 0xff), 2);
             line(frame, Point(det->p[1][0], det->p[1][1]),
-                     Point(det->p[2][0], det->p[2][1]),
-                     Scalar(0xff, 0, 0), 2);
+                 Point(det->p[2][0], det->p[2][1]),
+                 Scalar(0xff, 0, 0), 2);
             line(frame, Point(det->p[2][0], det->p[2][1]),
-                     Point(det->p[3][0], det->p[3][1]),
-                     Scalar(0xff, 0, 0), 2);
+                 Point(det->p[3][0], det->p[3][1]),
+                 Scalar(0xff, 0, 0), 2);
 
             stringstream ss;
             ss << det->id;
@@ -178,12 +207,29 @@ int main(int argc, char *argv[])
             double fontscale = 1.0;
             int baseline;
             Size textsize = getTextSize(text, fontface, fontscale, 2,
-                                            &baseline);
-            putText(frame, text, Point(det->c[0]-textsize.width/2,
-                                       det->c[1]+textsize.height/2),
+                                        &baseline);
+            putText(frame, text, Point(det->c[0] - textsize.width / 2, det->c[1] + textsize.height / 2),
                     fontface, fontscale, Scalar(0xff, 0x99, 0), 2);
+
+            hamm_hist[det->hamming]++;
         }
         apriltag_detections_destroy(detections);
+
+        if (!quiet)
+        {
+            timeprofile_display(td->tp);
+        }
+
+        // if (!quiet)
+        //     printf("hamm ");
+
+        // for (int i = 0; i < HAMM_HIST_MAX; i++)
+        //     printf("%5d ", hamm_hist[i]);
+
+        double t = timeprofile_total_utime(td->tp) / 1.0E3;
+        printf("%12.3f ", t);
+        printf("%5d", td->nquads);
+        printf("\n");
 
         imshow("Tag Detections", frame);
         if (waitKey(30) >= 0)
@@ -192,24 +238,38 @@ int main(int argc, char *argv[])
 
     apriltag_detector_destroy(td);
 
-    if (!strcmp(famname, "tag36h11")) {
+    if (!strcmp(famname, "tag36h11"))
+    {
         tag36h11_destroy(tf);
-    } else if (!strcmp(famname, "tag25h9")) {
+    }
+    else if (!strcmp(famname, "tag25h9"))
+    {
         tag25h9_destroy(tf);
-    } else if (!strcmp(famname, "tag16h5")) {
+    }
+    else if (!strcmp(famname, "tag16h5"))
+    {
         tag16h5_destroy(tf);
-    } else if (!strcmp(famname, "tagCircle21h7")) {
+    }
+    else if (!strcmp(famname, "tagCircle21h7"))
+    {
         tagCircle21h7_destroy(tf);
-    } else if (!strcmp(famname, "tagCircle49h12")) {
+    }
+    else if (!strcmp(famname, "tagCircle49h12"))
+    {
         tagCircle49h12_destroy(tf);
-    } else if (!strcmp(famname, "tagStandard41h12")) {
+    }
+    else if (!strcmp(famname, "tagStandard41h12"))
+    {
         tagStandard41h12_destroy(tf);
-    } else if (!strcmp(famname, "tagStandard52h13")) {
+    }
+    else if (!strcmp(famname, "tagStandard52h13"))
+    {
         tagStandard52h13_destroy(tf);
-    } else if (!strcmp(famname, "tagCustom48h12")) {
+    }
+    else if (!strcmp(famname, "tagCustom48h12"))
+    {
         tagCustom48h12_destroy(tf);
     }
-
 
     getopt_destroy(getopt);
 
